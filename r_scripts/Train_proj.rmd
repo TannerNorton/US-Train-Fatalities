@@ -1,0 +1,259 @@
+---
+title: "An Analysis of US Train Fatalities: 2000 - 2018"
+author: "Tanner Norton"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document: 
+    theme: lumen
+    keep_md: TRUE
+    code_folding: hide
+
+---
+
+![](C:/Users\User\Documents\Fall 2019\Math 335\M335_FA19_Norton_Tann\Semester_Project\yellow_train.jpg)
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r load_libraries, include=FALSE}
+# Load libraries
+pacman::p_load(tidyverse, readxl, stringr, stringi,blscrapeR, forcats, skimr, rio, lubridate, riem, 
+               dygraphs,epitools, tidyquant, quantmod, timetk, DT, scales, USAboundaries, USAboundariesData,
+               ggrepel,sf, maps, geofacet, ggplot2, maptools, buildings, rnaturalearth, rvest, leaflet, 
+               prettydoc, magrittr, cdlTools, htmltools, RColorBrewer, viridis)
+
+```
+
+```{r load_data, include=FALSE}
+
+# Read in all_data
+all_data <- read_csv("C:/Users/User/Documents/Fall 2019/Math 335/M335_FA19_Norton_Tann/Semester_Project/Proj_data/all_data.csv")
+
+# all_data from 2010 - 2020
+all_data_2010 <- read_csv("C:/Users/User/Documents/Fall 2019/Math 335/M335_FA19_Norton_Tann/Semester_Project/Proj_data/all_data_2010.csv")
+
+
+
+# All deaths 2000-2019 grouped by date to show major wrecks in California only
+Major_accidents_cal <- all_data %>% 
+  filter(Fatal == 1,
+         state_name == "California") %>% 
+  mutate(C_date = paste(DAY, IMO, YEAR4, sep = "-"),
+         day = dmy(C_date)) %>% 
+  group_by(day,RAILROAD ) %>% 
+  summarise(total = sum(n())) 
+
+Worst_accidents_cal <- all_data %>% 
+  filter(Fatal == 1,
+         state_name == "California") %>% 
+  mutate(C_date = paste(DAY, IMO, YEAR4, sep = "-"),
+         day = dmy(C_date)) %>% 
+  group_by(day,RAILROAD ) %>% 
+  summarise(total = sum(n())) %>% 
+  filter(total > 3)
+
+
+# Create death Icon for map
+deathicon <- iconList(Y = makeIcon("C:/Users/User/Documents/Fall 2019/Math 335/M335_FA19_Norton_Tann/Semester_Project/death_icon.jpg",
+                                   "C:/Users/User/Documents/Fall 2019/Math 335/M335_FA19_Norton_Tann/Semester_Project/death_icon.jpg", 24,24))
+
+
+```
+
+
+
+## Background
+
+I recently came across an article that caught my attention seeing it that I myself had been involved in a near fatal train accident. The [Brightline Article](https://www.foxbusiness.com/markets/richard-bransons-florida-train-kills-more-per-mile-than-any-other-in-us) talks about a train in Florida that has been labled the deadliest train in the United States. Currently, Brightline trains reach tops speeds of 80 mph as they dart between Orlando and Miami but plans for future track expansion will result in segments where speeds will reach 125 mph. 
+
+I decided to further investigate their claim as well as gather more information about train fatalities. All data used in this project was gathered from the [Federal Railroad Administrations](https://safetydata.fra.dot.gov/OfficeofSafety/publicsite/on_the_fly_download.aspx) website. The question I sought to know is, "In what state do most train fatalities occur in and what characteristics describe those accidents?"
+
+
+
+## Data Wrangling
+
+```{r tidy_data}
+# Read in all_data
+all_data <- read_csv("C:/Users/User/Documents/Fall 2019/Math 335/M335_FA19_Norton_Tann/Semester_Project/Proj_data/all_data.csv")
+
+# All deaths 2000-2019
+all_deaths <- all_data %>% 
+  filter(Fatal == 1) %>% 
+  mutate(C_date = paste(DAY, IMO, YEAR4, sep = "-"))
+
+
+# States geometry data
+states <- us_boundaries(map_date = NULL, type = c("state", "county", "congressional"),
+                        resolution = c("low", "high")) %>% 
+  filter(!state_abbr %in% c("PR","HI"))
+
+# State total deaths 2000-2018
+state_deaths <- all_data %>% 
+  filter(YEAR4 < 2019) %>% 
+  group_by(state_name, YEAR4, REGION) %>% 
+  summarise(total_deaths = sum(Fatal)) %>% 
+  full_join(states) %>% 
+  filter(!state_name == "Hawaii")
+
+
+# Create a dataset with just death observations from California
+california_death <- all_deaths %>% 
+  filter(state_name == "California") %>% 
+  mutate(Month = case_when(as.numeric(IMO) %in% c(12,1,2) ~ "Winter",
+                           as.numeric(IMO) %in% c(3,4,5) ~ "Spring",
+                           as.numeric(IMO) %in% c(6,7,8) ~ "Summer",
+                           as.numeric(IMO) %in% c(9,10,11) ~ "Fall"),
+         week_day = dmy(C_date),
+         wday = ymd(week_day) %>% 
+           wday(label = TRUE))
+
+# Spatial data california deaths since 2010
+cali <- all_data_2010 %>% 
+  filter(state_name == "California",
+         Fatal == 1) %>% 
+  mutate(Narrative = paste(NARR1, NARR2, sep = "."))
+
+
+```
+
+## US Deaths 2000 - 2018
+
+```{r facet_geo, fig.width=15, fig.height=10}
+# Face geo of US deaths over time 2000 - 2018
+ggplot(state_deaths, aes(x = YEAR4, y = total_deaths)) +
+  geom_line() +
+  facet_geo(~ state_name, scales = "free") +
+  theme(axis.text.x = element_text(angle = 50, vjust = 1, hjust = 1)) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "US Train Fatalities", subtitle = "2010-2018", x = "Year", y = "Deaths")
+```
+
+With the visualization above it is important to take note that the y axis range varies by state. It is tough to distinguish any pattern that holds true for all states, however, it becomes fairly clear that the state of California has more deaths per year than any other and has been on an upward trend. 
+
+
+## California 
+
+### All deaths (2000 - 2018)
+```{r, data_california_death}
+california_death %>% 
+  filter(YEAR4 < 2019) %>% 
+  select(YEAR4, state_name, RAILROAD, AGE, NARR1) %>% 
+datatable(filter = 'top', options = list(
+  pageLength = 5, autoWidth = FALSE))
+
+
+
+```
+
+This datatable shows all 2,237 train related fatalities that have occured in California from 2000 - 2018. Some of the observations have a short narrative describing what happend. 
+
+
+## Geographic Locations
+
+```{r}
+
+# Create a map to show all of California deaths
+leaflet(cali) %>% setView(lng = -120, lat = 40, zoom = 4.5) %>% addTiles() %>% 
+  addMarkers(lng = ~LONGITUD, lat = ~LATITUDE, icon = ~deathicon[CASFATAL], label = ~htmlEscape(Narrative),
+             labelOptions = labelOptions(textsize = "10px")) %>% 
+  addPopups(-117.384544, 33.198039, popup = "My near fatal accident
+            June 12, 2012",
+            options = popupOptions(closeButton = FALSE),
+            labelOptions(textsize = "10px"))
+
+```
+
+This map shows the exact location of all train related fatalities in California from 2010 to 2018. Coordinates for the deaths of individuals between 2000-2009 were not available in this dataset. As mentioned above I also was involved in a near fatal train accident, the location of which can be seen labeled on the map. The major railroad routes are clearly marked by the individuals who have died with high concentrations along the coastline. 
+
+### Casualty Age 
+
+```{r}
+# Look at age group distribution of deaths in California
+ggplot(california_death, aes(x = as.factor(YEAR4), y = as.numeric(AGE))) +
+  geom_boxplot() +
+  scale_y_continuous(breaks = seq(0,100, by = 10)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Casualty Age", x = "Year", y = "Age")
+
+```
+
+The boxplots show that the age of the individuals who died range from 99 years to 1 years old. The median age of a casualty hovers between 35-45 years old.  
+
+## Time {.tabset .tabset-pills}
+
+### Seasonal 
+
+```{r}
+# deaths by season in California
+california_death %>% 
+  group_by(Month, YEAR4) %>% 
+  summarise(month_deaths = sum(n())) %>% 
+ggplot(aes(x = fct_reorder(Month, month_deaths, .fun = median, .desc = TRUE), y = month_deaths)) +
+  geom_boxplot() +
+  labs(title = "California Deaths by Season", subtitle = "2000 - 2018", x = "Season", y = "Number of Deaths")
+
+```
+
+I also wanted to know if any specific season of the year resulted in more train related deaths. The boxplot shows that the Fall months tend to have a higher number of deaths every year than any of the other seasons with Summer having the least. However, the median is still relative similar between all of them. 
+
+### Day of Week
+
+```{r, day_barplot}
+# Create barplot of week day deaths in California
+california_death %>% 
+  group_by(wday) %>% 
+  summarise(Fatalities = n()) %>% 
+  ggplot(aes(x = wday, y = Fatalities)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Deaths by Day", subtitle = "2000 - 2018", x = " ", y = "Deaths")
+
+```
+
+I suspected that if there was a day of the week during which the greatest number of casualties occured, it would be Friday. The barplot shows that indeed Fridays have resulted in the most deaths with all the other days of the week being relatively close.
+
+### Time of Day
+
+```{r, heat_map}
+california_death %>% 
+  mutate(Time = paste(TIMEHR, AMPM, sep = " ")) %>% 
+  group_by(AMPM, TIMEHR) %>% 
+  summarise(Fatalities = n()) %>% 
+ggplot(aes(x = as.factor(TIMEHR), y = AMPM, fill = Fatalities)) +
+  geom_tile(color = "white", size = .1, stat = "identity") +
+  scale_fill_viridis() +
+  labs(title = "When do deaths occur?", x = "Hour of day", y = "")
+
+```
+
+As talked about earlier, much of the railways in california follow coastline and individuals depend on these rails to commute to and from work. With this in mind, I would expect that the greatest number of train passengers show up between 7-9am along with 3-6pm. This heatmap shows the time of day when train fatalities are occuring most is indeed between 3-6pm. 
+
+## Worst Accidents in California
+
+```{r, fig.width= 10, fig.height= 8}
+# Timeline of major accidents in california
+ggplot(Major_accidents_cal, aes(x = day, y = total)) +
+  geom_point() +
+  scale_y_continuous(breaks = seq(0,30, by = 2)) +
+  geom_vline(data=Worst_accidents_cal, aes(xintercept=date(day), color = factor(RAILROAD,
+             labels = c("Amtrak", "Metrolink (California)", "Union Pacific"))), linetype = "dashed") +
+  theme(legend.position = "bottom") +
+  guides(color=guide_legend("Railroad")) +
+  labs(title = "Timeline of Major Accidents", subtitle = "California: 2000 - 2018", x = "Year", y = "Total Deaths") +
+  geom_label(data = Worst_accidents_cal,
+            aes(x = day , y = Worst_accidents_cal$total, label = day),
+            nudge_x = 4,
+            nudge_y = 3) 
+
+```
+
+A timeline has been created to highlight the major train accidents when there were at least four fatalities. All the major accidents that occured involved major railroad firms such as Amtrak, California Metrolink, and Union Pacific. 
+This [article](https://www.ntsb.gov/investigations/AccidentReports/Pages/RAR1001.aspx) contains more information about the accident that killed 25 people known as the Chatsworth train collision.
+
+
+## Conclusions
+
+To reiterate, the question I sought to know was, "In what state do most train fatalities occur in and what characteristics describe those accidents?". The state of California had a great deal more train related fatalities than any other. The locations of these fatalities followed the coastline heavily and the vast majority of individuals were in their working age years. Fall months resulted in the most deaths when compared to the other three seasons of the year and the mid to late afternoon hours are the most dangerous hours of the day. 
+
+
+
